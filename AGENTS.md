@@ -18,7 +18,7 @@
 
 来自课程要求和设计原则（§1.2）：
 
-- **只读 Git**：只调用白名单子命令 `--version`、`rev-parse`、`log`、`show`、`merge-base --is-ancestor`、`rev-list --count`；用 ProcessBuilder 的参数列表调用，仓库路径作为独立参数；每条命令带 `-c i18n.logOutputEncoding=UTF-8`。需要改用户 Git 配置的场景（如 `safe.directory`）只展示命令，由用户自己执行。
+- **只读 Git**：只调用白名单子命令 `--version`、`rev-parse`、`log`、`show`、`merge-base --is-ancestor`、`rev-list --count`；用 ProcessBuilder 的参数列表调用，仓库路径作为独立参数；每条命令带 `-c i18n.logOutputEncoding=UTF-8`。需要改用户 Git 配置的场景（如 `safe.directory`）只展示命令，由用户自己执行。所有 git 调用都经过 `GitService` → `GitRunner`，白名单由 `GitCommand` 在代码层面保证。
 - **只用本地文件持久化**：用户数据用 JSON（Gson），分析缓存用 CSV（Apache Commons CSV）。课程禁止任何数据库，包括 SQLite、H2 等嵌入式数据库。
 - **数据只写 `~/.gitviz`**：被分析的仓库目录和程序安装目录保持原样。
 - **原子写入**：每次写盘都经单线程 PersistenceExecutor 排队，按"同目录 .tmp → force → 复制 .bak → ATOMIC_MOVE"写入（§3.6）。缓存的 meta.json 最后写，作为缓存完整的标记。
@@ -29,9 +29,10 @@
 
 ## 构建与测试
 
-- `mvn test` 运行全部测试，`mvn javafx:run` 启动程序。命令变化时同步修改这里。
-- 运行需要 Git ≥ 2.31（缓存构建用到 `--diff-merges`）。
-- 测试仓库在 `@TempDir` 里用 git 命令现场创建，作者和时间通过环境变量固定；数据目录指向临时目录；"今天"由可注入的时钟决定。测试结果与开发者本机的仓库、Git 配置和日期无关。
+- 用 Maven Wrapper，本机不需要装 Maven：`./mvnw test` 运行全部测试，`./mvnw javafx:run` 启动程序；Windows 的 PowerShell / cmd 里用 `.\mvnw.cmd`。命令变化时同步修改这里和 README。
+- 运行需要 JDK 17+、Git ≥ 2.31（缓存构建用到 `--diff-merges`）。
+- 测试仓库用 `TestRepo`（`testutil` 包）在 `@TempDir` 里现场创建：它隔离开发者本机的 Git 配置，作者和时间通过环境变量固定。数据目录指向临时目录；"今天"由可注入的时钟决定。测试结果与开发者本机的仓库、Git 配置和日期无关。
+- 测试 JVM 的默认字符集被故意设成 GBK（见 `pom.xml`），漏写 UTF-8 的读写会在中文测试数据上失败。
 
 ## 工作方式
 

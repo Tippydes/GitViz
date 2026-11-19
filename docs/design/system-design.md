@@ -855,7 +855,8 @@ meta.json 回答的问题是“这份缓存还能不能用”。2.3.2 节的缓�
 ```bash
 git -c i18n.logOutputEncoding=UTF-8 log HEAD \
     --format=%x1e%H%x1f%P%x1f%aN%x1f%aE%x1f%at%x1f%ai%x1f%s \
-    --raw --numstat -M -z --diff-merges=first-parent
+    --raw --numstat -M -z --diff-merges=first-parent \
+    --root --no-textconv --no-color --no-show-signature --
 ```
 
 命令中的每个选项都对应一个具体的解析问题：
@@ -866,6 +867,7 @@ git -c i18n.logOutputEncoding=UTF-8 log HEAD \
 - `--raw` 提供变更类型，`--numstat` 提供增删行数（二进制文件显示为“-”，据此判断 binary），`-M` 开启重命名检测。
 - `--diff-merges=first-parent` 让合并提交显示相对第一父提交的变更，这与 P5 的显示方式一致。合并提交的增删行也会保存下来供 P5 显示，但 StatsService 不会把它们计入统计（见 2.2.3 节）。
 - `%ai` 只用于取末尾的时区（如 +0800，换算为 480 分钟）。`%at` 提供 Unix 秒。
+- `--root --no-textconv --no-color --no-show-signature` 让输出不受用户个人 Git 配置的影响：`log.showRoot=false` 会隐藏根提交的文件变更；textconv 会运行外部程序，还会改变增删行统计；`log.showSignature=true` 会把签名校验信息混进输出。末尾的 `--` 防止工作区里恰好有名为 HEAD 的文件时，Git 无法判断 HEAD 是版本还是路径。
 
 文件内容示例如下（省略了部分行）。最后一行的提交说明同时含有逗号和引号，按 RFC 4180 的规则，整个字段要用双引号括起来，内部的双引号写成两个：
 

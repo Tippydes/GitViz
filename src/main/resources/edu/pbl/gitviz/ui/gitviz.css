@@ -1,0 +1,145 @@
+/* GitViz 样式。颜色只在 .root 上定义一次，其余地方引用这些变量。 */
+
+.root {
+    -gv-text: #1f2328;
+    -gv-muted: #656d76;
+    -gv-border: #d0d7de;
+    -gv-surface: #f6f8fa;
+    -gv-card: #ffffff;
+    -gv-accent: #0969da;
+    -gv-addition: #1a7f37;
+    -gv-deletion: #cf222e;
+    -gv-overlay: rgba(255, 255, 255, 0.75);
+
+    -fx-font-size: 14px;
+    -fx-base: #f3f4f6;
+    -fx-accent: -gv-accent;
+    -fx-focus-color: -gv-accent;
+}
+
+.muted {
+    -fx-text-fill: -gv-muted;
+}
+
+.section-title {
+    -fx-font-size: 16px;
+    -fx-font-weight: bold;
+}
+
+/* ---------- P1 欢迎页 ---------- */
+
+.welcome-view {
+    -fx-background-color: -gv-surface;
+    -fx-padding: 48;
+}
+
+.welcome-title {
+    -fx-font-size: 26px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -gv-text;
+}
+
+.welcome-subtitle {
+    -fx-text-fill: -gv-muted;
+}
+
+.welcome-card {
+    -fx-background-color: -gv-card;
+    -fx-background-radius: 8;
+    -fx-border-color: -gv-border;
+    -fx-border-radius: 8;
+    -fx-padding: 24;
+}
+
+.field-label {
+    -fx-font-weight: bold;
+}
+
+/* ---------- 工作区外壳 ---------- */
+
+.workspace-toolbar {
+    -fx-padding: 6 12;
+    -fx-spacing: 12;
+    -fx-background-color: -gv-card;
+    -fx-border-color: transparent transparent -gv-border transparent;
+}
+
+.head-label {
+    -fx-text-fill: -gv-muted;
+}
+
+.workspace-nav {
+    -fx-pref-width: 170;
+    -fx-padding: 12 8;
+    -fx-background-color: -gv-surface;
+    -fx-border-color: transparent -gv-border transparent transparent;
+}
+
+.workspace-nav .toggle-button {
+    -fx-alignment: center-left;
+    -fx-padding: 8 12;
+    -fx-background-color: transparent;
+    -fx-background-radius: 6;
+}
+
+.workspace-nav .toggle-button:hover {
+    -fx-background-color: derive(-gv-surface, -6%);
+}
+
+.workspace-nav .toggle-button:selected {
+    -fx-background-color: #24292f;
+    -fx-text-fill: white;
+    -fx-font-weight: bold;
+}
+
+.status-bar {
+    -fx-padding: 4 12;
+    -fx-background-color: -gv-surface;
+    -fx-border-color: -gv-border transparent transparent transparent;
+}
+
+.status-bar .label {
+    -fx-text-fill: -gv-muted;
+    -fx-font-size: 12px;
+}
+
+/* ---------- P3 提交历史 ---------- */
+
+.history-view {
+    -fx-padding: 16;
+    -fx-spacing: 10;
+    -fx-background-color: -gv-card;
+}
+
+.commit-table .hash-column {
+    -fx-font-family: "Monospaced";
+}
+
+.commit-table .table-cell {
+    -fx-alignment: center-left;
+}
+
+.additions {
+    -fx-text-fill: -gv-addition;
+}
+
+.deletions {
+    -fx-text-fill: -gv-deletion;
+}
+
+.commit-table .table-row-cell:selected .additions,
+.commit-table .table-row-cell:selected .deletions,
+.commit-table .table-row-cell:selected .muted {
+    -fx-text-fill: white;
+}
+
+/* ---------- 读取中遮罩、错误详情 ---------- */
+
+.busy-overlay {
+    -fx-background-color: -gv-overlay;
+}
+
+.technical-details {
+    -fx-font-family: "Monospaced";
+    -fx-font-size: 12px;
+}
