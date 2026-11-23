@@ -13,9 +13,10 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-        <!-- 最低 JDK 17；JavaFX 21 是仍支持 JDK 17 的 LTS 线（JavaFX 22 起要求 JDK 21） -->
+        <!-- 编译目标 JDK 17。JavaFX 22 起提供读取系统深浅色的 API（ColorScheme），它的类文件仍是 JDK 17 目标，
+             所以不必为此升级 JDK。决策见 docs/adr/0001-javafx-22-on-jdk-17.md -->
         <maven.compiler.release>17</maven.compiler.release>
-        <javafx.version>21.0.13</javafx.version>
+        <javafx.version>22.0.2</javafx.version>
         <junit.version>5.14.4</junit.version>
     </properties>
 

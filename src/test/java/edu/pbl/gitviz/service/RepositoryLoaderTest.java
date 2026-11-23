@@ -89,6 +89,19 @@ class RepositoryLoaderTest {
     }
 
     @Test
+    void theSessionsHeadAndCommitListComeFromTheSameSnapshot() throws GitException {
+        TestRepo repo = TestRepo.init(temp);
+        String first = repo.write("a.txt", "1\n").commit("第一次");
+        RepositoryLoader loader = new RepositoryLoader(repo.gitService());
+        RepositorySession session = loader.load(repo.root());
+        repo.write("a.txt", "2\n").commit("加载之后又有人提交");
+
+        // 同一次加载内部：HEAD 与列表都来自 readHead 得到的哈希，而不是各自再去读 HEAD
+        assertEquals(first, session.head().hash());
+        assertEquals(List.of(first), hashes(session.commits()));
+    }
+
+    @Test
     void openingAFolderThatIsNotARepositoryFailsWithAGitError() throws IOException {
         Path folder = Files.createDirectories(temp.resolve("普通文件夹"));
         TestRepo isolated = TestRepo.init(temp.resolve("isolation"));

@@ -38,9 +38,14 @@ public final class GitService {
 
     /** 当前 HEAD 的完整哈希，以及它所在的分支（分离头指针时 ref 为 null）。 */
     public HeadInfo readHead(Path repo) throws GitException {
+        return readHead(repo, new CancellationToken());
+    }
+
+    /** 同 {@link #readHead(Path)}，可取消。 */
+    public HeadInfo readHead(Path repo, CancellationToken token) throws GitException {
         // 末尾的 "--" 防止工作区里恰好有名为 HEAD 的文件时出现歧义；rev-parse 会把它原样输出成第三行
         GitResult<String> result = runner.runText(repo,
-                GitCommand.of("rev-parse", "HEAD", "--symbolic-full-name", "HEAD", "--")).requireSuccess();
+                GitCommand.of("rev-parse", "HEAD", "--symbolic-full-name", "HEAD", "--"), token).requireSuccess();
         String[] lines = result.stdout().strip().split("\\R");
         if (lines.length < 2) {
             throw GitException.outputUnreadable(result.commandLine(),
@@ -53,16 +58,18 @@ public final class GitService {
 
     /** 从 HEAD 读取全部提交，顺序与 git log 一致。 */
     public List<CommitRecord> readLog(Path repo) throws GitException {
-        return readLog(repo, "HEAD", commit -> { });
+        return readLog(repo, "HEAD", commit -> { }, new CancellationToken());
     }
 
     /**
-     * 读取 {@code revisions} 可达的提交（如 {@code HEAD}，增量构建时为 {@code 旧head..HEAD}）。
+     * 读取 {@code revisions} 可达的提交。传入具体哈希可以锁定一份快照：即使之后 HEAD 前进，结果也不变。
+     * 增量构建时为 {@code 旧head..HEAD}。
      *
      * @param onCommit 每解析出一个提交就在调用线程上回调一次，供显示进度
+     * @param token    取消后本次读取以 {@link GitException.Kind#CANCELLED} 失败
      */
-    public List<CommitRecord> readLog(Path repo, String revisions, Consumer<CommitRecord> onCommit)
-            throws GitException {
+    public List<CommitRecord> readLog(Path repo, String revisions, Consumer<CommitRecord> onCommit,
+                                      CancellationToken token) throws GitException {
         Objects.requireNonNull(revisions, "revisions");
         if (revisions.isEmpty() || revisions.startsWith("-")) {
             throw new IllegalArgumentException("无效的版本范围: " + revisions);
@@ -76,7 +83,7 @@ public final class GitService {
         runner.run(repo, GitCommand.of("log", args), stdout -> GitLogParser.parse(stdout, commit -> {
             commits.add(commit);
             onCommit.accept(commit);
-        })).requireSuccess();
+        }), token).requireSuccess();
         return List.copyOf(commits);
     }
 }

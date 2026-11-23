@@ -9,10 +9,13 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -100,5 +103,44 @@ class GitRunnerTest {
 
         assertEquals(GitException.Kind.OUTPUT_UNREADABLE, error.kind());
         assertTrue(error.getCause() instanceof GitOutputParseException);
+    }
+
+    @Test
+    void cancellingKillsTheRunningProcessAndReturnsPromptly() throws Exception {
+        Path fakeGit = FakeGit.sleeping(temp, 30);
+        GitRunner runner = new GitRunner(fakeGit.toString(), Duration.ofSeconds(60), Map.of());
+        CancellationToken token = new CancellationToken();
+        CompletableFuture<GitException> failure = CompletableFuture.supplyAsync(() -> {
+            try {
+                runner.run(null, GitCommand.of("--version"), in -> in.readAllBytes(), token);
+                return null;
+            } catch (GitException e) {
+                return e;
+            }
+        });
+        Thread.sleep(500); // 给子进程一点时间真正启动
+
+        long start = System.nanoTime();
+        token.cancel();
+        GitException error = failure.get(10, TimeUnit.SECONDS);
+        Duration elapsed = Duration.ofNanos(System.nanoTime() - start);
+
+        assertNotNull(error, "取消后 run 应当抛出异常");
+        assertEquals(GitException.Kind.CANCELLED, error.kind());
+        assertTrue(elapsed.compareTo(Duration.ofSeconds(10)) < 0,
+                "取消后应立即返回，不必等子进程睡满 30 秒；实际用时 " + elapsed);
+    }
+
+    @Test
+    void aTokenCancelledBeforeTheStartNeverStartsGit() {
+        CancellationToken token = new CancellationToken();
+        token.cancel();
+        GitRunner runner = new GitRunner(temp.resolve("no-such-git.exe").toString(), Duration.ofSeconds(5), Map.of());
+
+        GitException error = assertThrows(GitException.class,
+                () -> runner.runText(null, GitCommand.of("--version"), token));
+
+        // 如果真的去启动了，这里的失败类型会是 START_FAILED
+        assertEquals(GitException.Kind.CANCELLED, error.kind());
     }
 }

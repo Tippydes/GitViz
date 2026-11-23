@@ -1,7 +1,9 @@
 package edu.pbl.gitviz.ui;
 
 import edu.pbl.gitviz.service.RepositorySession;
+import edu.pbl.gitviz.service.git.CancellationToken;
 import javafx.concurrent.Task;
+import javafx.event.Event;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
 import javafx.scene.control.Label;
@@ -9,6 +11,8 @@ import javafx.scene.control.ProgressIndicator;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyCodeCombination;
 import javafx.scene.input.KeyCombination;
+import javafx.scene.input.KeyEvent;
+import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
@@ -39,7 +43,7 @@ public final class MainWindow {
     private final WorkspaceView workspaceView;
 
     private RepositorySession session;
-    private Task<RepositorySession> loading;
+    private LoadAttempt inFlight;
 
     public MainWindow(Stage stage, AppContext context) {
         this.stage = Objects.requireNonNull(stage, "stage");
@@ -49,6 +53,13 @@ public final class MainWindow {
         this.busyOverlay = createBusyOverlay();
 
         StackPane root = new StackPane(content, busyOverlay);
+        // 读取期间窗口是模态的（§2.1）：鼠标点不到下面的界面，键盘也不行（包括 Tab 切到工具栏按钮后按回车）
+        root.addEventFilter(KeyEvent.ANY, event -> {
+            if (busyOverlay.isVisible()) {
+                event.consume();
+            }
+        });
+        busyOverlay.addEventFilter(MouseEvent.ANY, Event::consume);
         Scene scene = new Scene(root, DEFAULT_WIDTH, DEFAULT_HEIGHT);
         scene.getStylesheets().add(Objects.requireNonNull(
                 MainWindow.class.getResource("gitviz.css"), "gitviz.css").toExternalForm());
@@ -59,6 +70,7 @@ public final class MainWindow {
         stage.setScene(scene);
         stage.setMinWidth(MIN_WIDTH);
         stage.setMinHeight(MIN_HEIGHT);
+        stage.setOnHidden(event -> cancelLoading());
         showWelcome();
     }
 
@@ -88,37 +100,64 @@ public final class MainWindow {
 
     /** 工具栏"首页"：回到 P1 并释放会话。 */
     void goHome() {
+        cancelLoading();
         session = null;
         workspaceView.clear();
         showWelcome();
     }
 
     private void load(Path path, Consumer<RepositorySession> onLoaded) {
-        if (loading != null) {
+        if (inFlight != null) {
             return;
         }
+        CancellationToken token = new CancellationToken();
         Task<RepositorySession> task = new Task<>() {
             @Override
             protected RepositorySession call() throws Exception {
-                return context.repositoryLoader().load(path);
+                return context.repositoryLoader().load(path, token);
             }
         };
         task.setOnSucceeded(event -> {
+            if (!isCurrent(task)) {
+                return;
+            }
             finishLoading();
             onLoaded.accept(task.getValue());
         });
         task.setOnFailed(event -> {
+            if (!isCurrent(task)) {
+                return;
+            }
             finishLoading();
             ErrorDialogs.showLoadFailure(stage, path, task.getException());
         });
-        loading = task;
+        inFlight = new LoadAttempt(token, task);
         busyMessage.setText("正在读取提交历史…");
         busyOverlay.setVisible(true);
         context.runInBackground(task);
     }
 
+    /**
+     * 取消正在进行的读取：结束 git 子进程，并让它的结果不再影响界面。没有进行中的读取时什么也不做。
+     * 回首页、关闭窗口时调用。
+     */
+    private void cancelLoading() {
+        LoadAttempt attempt = inFlight;
+        if (attempt == null) {
+            return;
+        }
+        finishLoading();
+        attempt.token.cancel();
+        attempt.task.cancel();
+    }
+
+    /** 只有仍然是当前请求的结果才能更新界面；被取消的请求，结果直接丢弃。 */
+    private boolean isCurrent(Task<?> task) {
+        return inFlight != null && inFlight.task == task;
+    }
+
     private void finishLoading() {
-        loading = null;
+        inFlight = null;
         busyOverlay.setVisible(false);
     }
 
@@ -145,6 +184,18 @@ public final class MainWindow {
         overlay.getStyleClass().add("busy-overlay");
         overlay.setVisible(false);
         return overlay;
+    }
+
+    /** 一次正在进行的打开仓库请求。取消后，它的结果不再影响界面。 */
+    private static final class LoadAttempt {
+
+        private final CancellationToken token;
+        private final Task<RepositorySession> task;
+
+        LoadAttempt(CancellationToken token, Task<RepositorySession> task) {
+            this.token = token;
+            this.task = task;
+        }
     }
 
     /** Windows 资源管理器"复制为路径"会带上双引号。 */

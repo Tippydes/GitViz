@@ -2,6 +2,7 @@ package edu.pbl.gitviz.service;
 
 import edu.pbl.gitviz.model.CommitRecord;
 import edu.pbl.gitviz.model.HeadInfo;
+import edu.pbl.gitviz.service.git.CancellationToken;
 import edu.pbl.gitviz.service.git.GitException;
 import edu.pbl.gitviz.service.git.GitService;
 
@@ -30,9 +31,18 @@ public final class RepositoryLoader {
     }
 
     public RepositorySession load(Path repoPath) throws GitException {
+        return load(repoPath, new CancellationToken());
+    }
+
+    /**
+     * 读取 HEAD，再按 HEAD 的哈希读取提交。两次读取锁定在同一个提交上：读取期间即使有人提交或切换分支，
+     * 会话里的 HEAD 与提交列表也一致。
+     */
+    public RepositorySession load(Path repoPath, CancellationToken token) throws GitException {
         Path root = repoPath.toAbsolutePath().normalize();
-        HeadInfo head = git.readHead(root);
-        List<CommitRecord> commits = new ArrayList<>(git.readLog(root));
+        HeadInfo head = git.readHead(root, token);
+        List<CommitRecord> commits = new ArrayList<>(
+                git.readLog(root, head.hash(), commit -> { }, token));
         commits.sort(NEWEST_FIRST);
         return new RepositorySession(root, head, commits);
     }

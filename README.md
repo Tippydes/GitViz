@@ -12,7 +12,7 @@
 | --- | --- | --- |
 | JDK | 17 或更高 | 在 JDK 17 和 21 上验证过 |
 | Git | 2.31 或更高 | 程序通过命令行调用 git，命令行里 `git --version` 能看到版本号即可 |
-| JavaFX | 21.0.13 | 由 Maven 自动下载，不需要单独安装 |
+| JavaFX | 22.0.2 | 由 Maven 自动下载，不需要单独安装；选择理由见 [ADR 0001](docs/adr/0001-javafx-22-on-jdk-17.md) |
 | Maven | 3.9.16 | 由 Maven Wrapper 自动下载，不需要单独安装 |
 
 ## 构建与运行

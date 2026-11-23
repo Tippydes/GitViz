@@ -37,10 +37,16 @@ public final class WelcomeView extends BorderPane {
         HBox.setHgrow(pathField, Priority.ALWAYS);
 
         Button openButton = new Button("打开");
-        openButton.setDefaultButton(true);
         openButton.disableProperty().bind(Bindings.createBooleanBinding(
                 () -> pathField.getText() == null || pathField.getText().isBlank(), pathField.textProperty()));
-        openButton.setOnAction(event -> onOpen.accept(pathField.getText()));
+        // 回车（TextField 的 onAction）和"打开"按钮走同一个入口；不用 defaultButton，避免同一次回车触发两次
+        Runnable submit = () -> {
+            if (!pathField.getText().isBlank()) {
+                onOpen.accept(pathField.getText());
+            }
+        };
+        pathField.setOnAction(event -> submit.run());
+        openButton.setOnAction(event -> submit.run());
 
         HBox inputRow = new HBox(8, pathField, openButton);
         inputRow.setAlignment(Pos.CENTER_LEFT);

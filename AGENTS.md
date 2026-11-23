@@ -30,7 +30,7 @@
 ## 构建与测试
 
 - 用 Maven Wrapper，本机不需要装 Maven：`./mvnw test` 运行全部测试，`./mvnw javafx:run` 启动程序；Windows 的 PowerShell / cmd 里用 `.\mvnw.cmd`。命令变化时同步修改这里和 README。
-- 运行需要 JDK 17+、Git ≥ 2.31（缓存构建用到 `--diff-merges`）。
+- 运行需要 JDK 17+、Git ≥ 2.31（缓存构建用到 `--diff-merges`）。编译目标与 JavaFX 版本的决策见 `docs/adr/0001-javafx-22-on-jdk-17.md`，改版本前先读它。
 - 测试仓库用 `TestRepo`（`testutil` 包）在 `@TempDir` 里现场创建：它隔离开发者本机的 Git 配置，作者和时间通过环境变量固定。数据目录指向临时目录；"今天"由可注入的时钟决定。测试结果与开发者本机的仓库、Git 配置和日期无关。
 - 测试 JVM 的默认字符集被故意设成 GBK（见 `pom.xml`），漏写 UTF-8 的读写会在中文测试数据上失败。
 

@@ -83,19 +83,38 @@ public final class GitRunner {
 
     /** 把标准输出整体读成 UTF-8 文本。 */
     public GitResult<String> runText(Path workDir, GitCommand command) throws GitException {
-        return run(workDir, command, in -> new String(in.readAllBytes(), StandardCharsets.UTF_8));
+        return runText(workDir, command, new CancellationToken());
+    }
+
+    /** 把标准输出整体读成 UTF-8 文本，可取消。 */
+    public GitResult<String> runText(Path workDir, GitCommand command, CancellationToken token)
+            throws GitException {
+        return run(workDir, command, in -> new String(in.readAllBytes(), StandardCharsets.UTF_8), token);
+    }
+
+    /** 执行命令，不可取消。 */
+    public <T> GitResult<T> run(Path workDir, GitCommand command, StdoutReader<T> reader) throws GitException {
+        return run(workDir, command, reader, new CancellationToken());
     }
 
     /**
      * 执行命令。读取器抛出的异常（包括解析失败）会终止进程并转成 {@link GitException}。
      *
+     * <p>{@code token} 被取消时，正在运行的进程会被立即结束（连同它的子进程），本次调用以
+     * {@link GitException.Kind#CANCELLED} 失败。取消发生在进程结束之后则不影响已经得到的结果。
+     *
      * @param workDir 作为 {@code -C} 传入的目录；为 null 时不传（如 {@code git --version}）
-     * @throws GitException 无法启动、超时、被中断或输出无法读取；非零退出码不抛出，见 {@link GitResult#requireSuccess()}
+     * @throws GitException 无法启动、超时、取消、输出无法读取；非零退出码不抛出，见 {@link GitResult#requireSuccess()}
      */
-    public <T> GitResult<T> run(Path workDir, GitCommand command, StdoutReader<T> reader) throws GitException {
+    public <T> GitResult<T> run(Path workDir, GitCommand command, StdoutReader<T> reader,
+                                CancellationToken token) throws GitException {
         Objects.requireNonNull(command, "command");
         Objects.requireNonNull(reader, "reader");
+        Objects.requireNonNull(token, "token");
         List<String> commandLine = commandLine(workDir, command);
+        if (token.isCancelled()) {
+            throw GitException.cancelled(commandLine);
+        }
 
         ProcessBuilder builder = new ProcessBuilder(commandLine);
         Map<String, String> env = builder.environment();
@@ -109,6 +128,8 @@ public final class GitRunner {
         } catch (IOException e) {
             throw GitException.startFailed(commandLine, e);
         }
+        // 取消时直接结束进程树，不依赖"写管道失败"这种偶然的结束方式
+        token.onCancel(() -> destroyTree(process));
 
         AtomicBoolean timedOut = new AtomicBoolean(false);
         ScheduledFuture<?> watchdog = WATCHDOG.schedule(() -> {
@@ -137,6 +158,9 @@ public final class GitRunner {
 
             int exitCode = process.waitFor();
             String errorText = stderr.awaitText();
+            if (token.isCancelled()) {
+                throw GitException.cancelled(commandLine);
+            }
             if (timedOut.get()) {
                 throw GitException.timedOut(commandLine, timeout, errorText);
             }
@@ -173,8 +197,11 @@ public final class GitRunner {
         return commandLine;
     }
 
-    /** 先结束子孙进程再结束 git 本身，避免残留进程继续占着输出管道。 */
+    /** 先结束子孙进程再结束 git 本身，避免残留进程继续占着输出管道。已经结束的进程什么也不做。 */
     private static void destroyTree(Process process) {
+        if (!process.isAlive()) {
+            return;
+        }
         process.descendants().forEach(ProcessHandle::destroyForcibly);
         process.destroyForcibly();
     }

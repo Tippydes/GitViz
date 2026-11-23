@@ -220,4 +220,19 @@ class GitServiceTest {
         assertEquals(GitException.Kind.NON_ZERO_EXIT, error.kind());
         assertFalse(error.stderr().isBlank());
     }
+
+    @Test
+    void readsTheRequestedSnapshotEvenAfterHeadMovesOn() throws GitException {
+        TestRepo repo = TestRepo.init(temp);
+        String first = repo.write("a.txt", "1\n").commit("第一次");
+        GitService git = repo.gitService();
+        repo.write("a.txt", "2\n").commit("第二次：HEAD 已经前进");
+
+        List<String> pinned = git.readLog(repo.root(), first, commit -> { }, new CancellationToken()).stream()
+                .map(CommitRecord::hash).toList();
+        List<String> latest = git.readLog(repo.root()).stream().map(CommitRecord::hash).toList();
+
+        assertEquals(List.of(first), pinned, "按哈希读取，只包含读取那一刻的历史");
+        assertEquals(2, latest.size(), "按 HEAD 读取，包含全部提交");
+    }
 }
