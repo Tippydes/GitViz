@@ -1,5 +1,7 @@
 name: encoding-diag
-on: workflow_dispatch
+on:
+  push:
+    branches: [ci-encoding-diagnostic]
 permissions:
   contents: read
 jobs:
