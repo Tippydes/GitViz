@@ -1,0 +1,34 @@
+name: encoding-diag
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: JVM and locale encodings
+        run: |
+          echo "LANG=$LANG LC_ALL=$LC_ALL"
+          locale 2>/dev/null | head -3
+          mkdir -p /tmp/enc && cd /tmp/enc
+          cat > Enc.java << 'JEOF'
+          public class Enc {
+              public static void main(String[] a) {
+                  System.out.println("file.encoding=" + System.getProperty("file.encoding"));
+                  System.out.println("sun.jnu.encoding=" + System.getProperty("sun.jnu.encoding"));
+                  System.out.println("default charset=" + java.nio.charset.Charset.defaultCharset());
+              }
+          }
+          JEOF
+          javac Enc.java
+          java -cp . Enc
+          echo "--- with -Dfile.encoding=GBK (surefire argLine):"
+          java -Dfile.encoding=GBK -cp . Enc
+          echo "--- git process argv bytes for a Chinese filename:"
+          mkdir -p /tmp/argv && cd /tmp/argv && git init -q -b main . && git config user.email a@b && git config user.name t
+          echo x > "说明.txt" && git add -A && git -c core.quotepath=false commit -q -m "中文"
+          git -C /tmp/argv ls-files | od -c | head -2
