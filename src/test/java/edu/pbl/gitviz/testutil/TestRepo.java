@@ -20,8 +20,11 @@ import java.util.concurrent.CompletableFuture;
 /**
  * 在临时目录里用 git 命令现场造一个测试仓库。
  *
- * <p>与开发者本机无关：不读系统级和用户级 Git 配置（{@code GIT_CONFIG_NOSYSTEM}、{@code GIT_CONFIG_GLOBAL}），
- * 作者、提交者和时间都通过环境变量指定。提交说明经 UTF-8 文件传入，不受命令行编码影响。
+ * <p>与开发者本机无关：不读系统级和用户级 Git 配置（{@code GIT_CONFIG_NOSYSTEM}、{@code GIT_CONFIG_GLOBAL}）。
+ * 作者写进 {@code .git/gitviz-test-identity}，提交说明经 {@code -F} 文件传入，时间通过环境变量指定。
+ *
+ * <p><b>进程的参数和环境变量只放 ASCII。</b>JDK 17 的 {@link ProcessBuilder} 在 Linux 上按默认字符集
+ * （测试 JVM 里是 GBK）编码参数和环境变量，中文会变成乱码（CI 上实测过）。中文数据只走 UTF-8 文件。
  *
  * <pre>{@code
  * TestRepo repo = TestRepo.init(tempDir);
@@ -37,6 +40,9 @@ import java.util.concurrent.CompletableFuture;
 public final class TestRepo {
 
     private static final OffsetDateTime DEFAULT_START = OffsetDateTime.parse("2026-11-01T10:00:00+08:00");
+
+    /** 作者信息所在的文件，位于 {@code .git} 目录下，由 {@code .git/config} 的 include 引入。 */
+    static final String IDENTITY_FILE = "gitviz-test-identity";
 
     private final Path root;
     private final Path workDir;
@@ -66,6 +72,7 @@ public final class TestRepo {
         repo.git("init", "-q", "-b", "main");
         repo.git("config", "core.autocrlf", "false");
         repo.git("config", "commit.gpgsign", "false");
+        repo.git("config", "include.path", IDENTITY_FILE);
         return repo;
     }
 
@@ -91,6 +98,7 @@ public final class TestRepo {
         return new GitService(new GitRunner("git", GitRunner.DEFAULT_TIMEOUT, isolatedEnvironment()));
     }
 
+    /** 之后的提交使用这个作者和提交者。名字可以含中文。 */
     public TestRepo author(String name, String email) {
         this.authorName = name;
         this.authorEmail = email;
@@ -118,18 +126,25 @@ public final class TestRepo {
         return this;
     }
 
+    /** 在文件系统里改名，不经过 git 命令行参数；下一次 {@link #commit} 时 git 会识别为重命名（-M）。 */
     public TestRepo rename(String from, String to) {
         try {
-            Files.createDirectories(root.resolve(to).getParent());
+            Path target = root.resolve(to);
+            Files.createDirectories(target.getParent());
+            Files.move(root.resolve(from), target);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
-        git("mv", from, to);
         return this;
     }
 
+    /** 在文件系统里删除文件；下一次 {@link #commit} 时记为删除。 */
     public TestRepo remove(String relativePath) {
-        git("rm", "-q", relativePath);
+        try {
+            Files.delete(root.resolve(relativePath));
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
         return this;
     }
 
@@ -162,6 +177,7 @@ public final class TestRepo {
 
     /** {@code --no-ff} 合并，总是生成合并提交，返回它的哈希。 */
     public String merge(String branch, String message) {
+        writeIdentity();
         git("merge", "-q", "--no-ff", "--no-edit", "-F", messageFile(message).toString(), branch);
         return advance(head());
     }
@@ -197,11 +213,30 @@ public final class TestRepo {
     }
 
     private String commitWith(String message, String... extraArgs) {
+        writeIdentity();
         List<String> args = new ArrayList<>(List.of("commit", "-q", "--allow-empty-message", "--cleanup=verbatim",
                 "-F", messageFile(message).toString()));
         args.addAll(List.of(extraArgs));
         git(args.toArray(String[]::new));
         return advance(head());
+    }
+
+    /**
+     * 把当前作者写进 {@code .git/gitviz-test-identity}（UTF-8）。作者名含中文时只能走文件：
+     * 环境变量和命令行参数会按默认字符集编码，CI 上会变成乱码。每次提交前调用。
+     */
+    private void writeIdentity() {
+        String content = "[user]\n\tname = " + quoted(authorName) + "\n\temail = " + quoted(authorEmail) + "\n";
+        try {
+            Files.writeString(root.resolve(".git").resolve(IDENTITY_FILE), content, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    /** git 配置值的双引号写法；转义反斜杠和双引号。 */
+    private static String quoted(String value) {
+        return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
     }
 
     private String advance(String hash) {
@@ -219,14 +254,11 @@ public final class TestRepo {
         return file;
     }
 
+    /** 只有时间走环境变量（ASCII）。作者不在这里，见 {@link #writeIdentity()}。 */
     private Map<String, String> environment() {
         Map<String, String> env = new HashMap<>(isolatedEnvironment());
         String time = nextTime.toString();
-        env.put("GIT_AUTHOR_NAME", authorName);
-        env.put("GIT_AUTHOR_EMAIL", authorEmail);
         env.put("GIT_AUTHOR_DATE", time);
-        env.put("GIT_COMMITTER_NAME", authorName);
-        env.put("GIT_COMMITTER_EMAIL", authorEmail);
         env.put("GIT_COMMITTER_DATE", time);
         return env;
     }
