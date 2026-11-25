@@ -145,7 +145,7 @@
 
 **④ 视图切换**：列表视图与时间线视图使用同一份筛选结果。时间线视图把提交按日期分组，用竖线和圆点串联，合并提交以空心节点表示，更直观地展示“什么时候集中提交”；列表视图信息密度更高，适合逐条查找。
 
-**⑤ 提交列表**：列出短哈希、提交说明、作者、提交时间和增删行数，按作者时间倒序排列，标题旁显示“显示 42 / 58 条”。已加书签的提交前显示 ★。列表使用 TableView 的虚拟化机制，只渲染可见的行，因此“滚动加载更多”只是渲染层面的按需绘制，数据已全部在内存中。单击一行在右侧显示摘要；双击或按 Enter 进入 P5；右键菜单提供“查看差异”“复制完整哈希”“加入书签”“只看该作者的提交”。
+**⑤ 提交列表**：列出短哈希、提交说明、作者、提交时间和增删行数，按作者时间倒序排列（时间未知的排在最后），标题旁显示“显示 42 / 58 条”。已加书签的提交前显示 ★。列表使用 TableView 的虚拟化机制，只渲染可见的行，因此“滚动加载更多”只是渲染层面的按需绘制，数据已全部在内存中。单击一行在右侧显示摘要；双击或按 Enter 进入 P5；右键菜单提供“查看差异”“复制完整哈希”“加入书签”“只看该作者的提交”。
 
 **⑥ 提交摘要**：显示提交标题、完整哈希（可复制）、作者、邮箱、带时区的提交时间、父提交（可点击跳到父提交）、变更文件数与增删行数，以及提交说明正文的前几行。正文不在缓存中，选中时才用 `git show -s` 读取，并放入内存中的小型缓存。底部的“查看差异”进入 P5，“编辑笔记”打开 P7。设计摘要区的原因是：初学者浏览历史时常常只想快速看看某次提交“是谁、什么时候、改了多少”，单击就能预览，不必离开列表。
 
@@ -841,8 +841,8 @@ meta.json 回答的问题是“这份缓存还能不能用”。2.3.2 节的缓�
 | `parent_hashes` | 父提交哈希 | String | 否 | 多个时以空格分隔；根提交为空；两个及以上表示合并提交 |
 | `author_name` | 作者名 | String | 是 | 已应用 .mailmap；长度 ≤ 255，超出时截断 |
 | `author_email` | 作者邮箱 | String | 否 | 已应用 .mailmap；长度 ≤ 255；保留原始大小写，读入后转为小写用于聚合 |
-| `author_time` | 作者时间 | long | 是 | Unix 秒，≥ 0；界面中显示为“提交时间”，用于排序和筛选 |
-| `tz_offset` | 作者时间的时区偏移 | int | 是 | 单位为分钟，范围 −720～840，如 +08:00 为 480 |
+| `author_time` | 作者时间 | long | 条件 | Unix 秒，≥ 0；界面中显示为“提交时间”，用于排序和筛选。1970 年以前的提交 git 无法输出时间，此时本字段与 `tz_offset` 同时为空，界面显示为“未知”，不参与日期筛选，排在列表最后（保持 git log 的顺序） |
+| `tz_offset` | 作者时间的时区偏移 | int | 条件 | 单位为分钟，范围 −720～840，如 +08:00 为 480；与 `author_time` 同时为空 |
 | `subject` | 提交说明首行 | String | 否 | 长度 ≤ 1000，超出时截断；可为空串；含逗号、引号、换行时按 RFC 4180 转义 |
 | `files_changed` | 变更文件数 | int | 是 | ≥ 0；等于 file_changes.csv 中该提交的行数 |
 | `additions` | 新增行数 | int | 是 | ≥ 0；不含二进制文件 |
@@ -853,19 +853,25 @@ meta.json 回答的问题是“这份缓存还能不能用”。2.3.2 节的缓�
 这张表由下面的命令生成。增量构建时，只把 `HEAD` 换成 `旧head..HEAD`。
 
 ```bash
-git -c i18n.logOutputEncoding=UTF-8 log HEAD \
+git -c i18n.logOutputEncoding=UTF-8 -c diff.relative=false -c diff.algorithm=myers \
+    -c diff.ignoreSubmodules=none -c diff.renameLimit=1000 -c core.attributesFile= \
+    -c mailmap.file= -c mailmap.blob= log HEAD \
     --format=%x1e%H%x1f%P%x1f%aN%x1f%aE%x1f%at%x1f%ai%x1f%s \
-    --raw --numstat -M -z --diff-merges=first-parent
+    --raw --numstat -M -z --diff-merges=first-parent \
+    --root --no-textconv --no-ext-diff --no-color --no-show-signature --
 ```
 
 命令中的每个选项都对应一个具体的解析问题：
 
-- `%x1e`、`%x1f` 是 ASCII 记录分隔符和单元分隔符，提交说明中几乎不可能出现。如果用逗号或空格分隔，遇到“修复登录, 调整样式”这样的说明就会解析错位。
+- `%x1e`、`%x1f` 是 ASCII 记录分隔符和单元分隔符。如果用逗号或空格分隔，遇到“修复登录, 调整样式”这样的说明就会解析错位。**已知限制**：git 允许提交说明里含这两个字节，此时当前解析器会拒绝整个仓库；待改为以 NUL 分隔的结构化解析（NUL 不可能出现在提交说明、身份和路径里）。
 - `-z` 让路径以 NUL 结尾且不加引号。默认情况下，Git 会把中文路径转义成 "\346\226\207..." 的形式，这在中文环境下是常见的乱码来源。
 - `i18n.logOutputEncoding=UTF-8` 通过 `-c` 只对本条命令生效，确保中文 Windows 上也输出 UTF-8，并且不修改用户的 Git 配置。
 - `--raw` 提供变更类型，`--numstat` 提供增删行数（二进制文件显示为“-”，据此判断 binary），`-M` 开启重命名检测。
 - `--diff-merges=first-parent` 让合并提交显示相对第一父提交的变更，这与 P5 的显示方式一致。合并提交的增删行也会保存下来供 P5 显示，但 StatsService 不会把它们计入统计（见 2.2.3 节）。
 - `%ai` 只用于取末尾的时区（如 +0800，换算为 480 分钟）。`%at` 提供 Unix 秒。
+- `--root --no-textconv --no-ext-diff --no-color --no-show-signature` 让输出不受用户个人 Git 配置的影响：`log.showRoot=false` 会隐藏根提交的文件变更；textconv 与外部差异程序会运行外部程序，还会改变增删行统计；`log.showSignature=true` 会把签名校验信息混进输出。末尾的 `--` 防止工作区里恰好有名为 HEAD 的文件时，Git 无法判断 HEAD 是版本还是路径。
+- `-c` 固定的配置项同样属于这一要求，每一项都经实测会改变结果：`diff.relative`（在子目录里运行时丢掉子目录外的文件）、`diff.algorithm`（不同算法的增删行数不同，实测 +2/−2 与 +15/−15）、`diff.ignoreSubmodules`（会让子模块指针的变化消失）、`core.attributesFile`（个人的 `-diff` 属性会把文本文件变成二进制）、`mailmap.file`（个人的映射会改写作者名）。空值表示"不读取这个文件"；仓库自己的 `.mailmap` 仍然生效。`diff.renameLimit` 固定为默认值 1000。
+- 环境变量 `GIT_NO_REPLACE_OBJECTS=1`：仓库里的 `refs/replace` 会让 `git log` 显示被替换后的提交，而不是仓库实际记录的历史（实测）。读取时同时移除会注入配置的环境变量（`GIT_CONFIG_PARAMETERS`、`GIT_CONFIG_COUNT`、`GIT_ATTR_SOURCE`）。
 
 文件内容示例如下（省略了部分行）。最后一行的提交说明同时含有逗号和引号，按 RFC 4180 的规则，整个字段要用双引号括起来，内部的双引号写成两个：
 

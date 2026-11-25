@@ -1,0 +1,88 @@
+package edu.pbl.gitviz.service;
+
+import edu.pbl.gitviz.model.AuthorTime;
+import edu.pbl.gitviz.model.CommitRecord;
+import edu.pbl.gitviz.model.TimeZoneMode;
+
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.Locale;
+import java.util.Objects;
+import java.util.Optional;
+
+/**
+ * 全程序唯一的时间显示入口：所有提交时间的显示、按日分组、日期筛选都经过这里。
+ *
+ * <p>默认按提交者时区显示、格式 {@code yyyy-MM-dd HH:mm}（§3.4.2 的默认值）。
+ * 设置页修改时间格式或时区时，只需替换成新的实例。不可变、线程安全。
+ *
+ * <p>时间未知的提交（见 {@link CommitRecord#authorTime()}）显示为 {@link #UNKNOWN}，没有日期，
+ * {@link #displayDate} 返回 empty，按日分组和日期筛选都应把它归到"未知"一组。
+ */
+public final class TimeDisplay {
+
+    /** 时间未知时显示的文字。 */
+    public static final String UNKNOWN = "未知";
+
+    public static final String DEFAULT_PATTERN = "yyyy-MM-dd HH:mm";
+
+    private static final DateTimeFormatter OFFSET = DateTimeFormatter.ofPattern("xxx", Locale.ROOT);
+
+    private final TimeZoneMode mode;
+    private final String pattern;
+    private final ZoneId localZone;
+    private final DateTimeFormatter formatter;
+
+    /**
+     * @param localZone 本机时区，{@link TimeZoneMode#LOCAL} 时使用
+     */
+    public TimeDisplay(TimeZoneMode mode, String pattern, ZoneId localZone) {
+        this.mode = Objects.requireNonNull(mode, "mode");
+        this.pattern = Objects.requireNonNull(pattern, "pattern");
+        this.localZone = Objects.requireNonNull(localZone, "localZone");
+        this.formatter = DateTimeFormatter.ofPattern(pattern, Locale.ROOT);
+    }
+
+    /** 默认：提交者时区，{@code yyyy-MM-dd HH:mm}。 */
+    public static TimeDisplay defaults() {
+        return new TimeDisplay(TimeZoneMode.COMMIT, DEFAULT_PATTERN, ZoneId.systemDefault());
+    }
+
+    public TimeZoneMode mode() {
+        return mode;
+    }
+
+    public String pattern() {
+        return pattern;
+    }
+
+    /** 换算到显示时区后的时间；时间未知时为 empty。 */
+    public Optional<ZonedDateTime> toDisplayTime(CommitRecord commit) {
+        return commit.authorTime().map(this::toDisplayTime);
+    }
+
+    private ZonedDateTime toDisplayTime(AuthorTime time) {
+        ZoneId zone = mode == TimeZoneMode.COMMIT ? time.zoneOffset() : localZone;
+        return time.instant().atZone(zone);
+    }
+
+    /** 列表中显示的提交时间，如 {@code 2026-11-01 15:02}；时间未知时为 {@link #UNKNOWN}。 */
+    public String format(CommitRecord commit) {
+        return toDisplayTime(commit).map(time -> time.format(formatter)).orElse(UNKNOWN);
+    }
+
+    /** 带时区的提交时间，如 {@code 2026-11-01 15:02 (+08:00)}；时间未知时为 {@link #UNKNOWN}。 */
+    public String formatWithOffset(CommitRecord commit) {
+        return toDisplayTime(commit)
+                .map(time -> time.format(formatter) + " (" + time.format(OFFSET) + ")")
+                .orElse(UNKNOWN);
+    }
+
+    /** 提交在显示时区下属于哪一天，供按日筛选和分组；时间未知时为 empty。 */
+    public Optional<LocalDate> displayDate(CommitRecord commit) {
+        return toDisplayTime(commit).map(ZonedDateTime::toLocalDate);
+    }
+}
