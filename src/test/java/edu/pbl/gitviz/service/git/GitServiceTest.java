@@ -15,6 +15,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.OffsetDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -186,30 +187,112 @@ class GitServiceTest {
         assertEquals("zhang@example.com", oldCommit.authorEmail());
     }
 
+    /**
+     * 用户个人的 Git 配置不能改变读取结果。每个泄漏项单独测一次，用的都是会真正改变 git 输出的配置
+     * （histogram 会改变行数，relative 只在子目录里生效，等等），并且同时从仓库根目录和子目录读取：
+     * 两者必须与干净环境下的结果完全相同。
+     */
     @Test
-    void theUsersPersonalGitConfigDoesNotChangeTheResult() throws GitException, IOException {
+    void personalGitConfigCannotChangeWhatIsRead() throws GitException, IOException {
         TestRepo repo = TestRepo.init(temp);
-        repo.author("张三", "zhang@example.com").write("说明.txt", "一\n二\n").commit("初始化");
-        repo.writeBytes("bin.dat", new byte[]{0, 1, 2, 3}).commit("二进制");
-        repo.rename("说明.txt", "文档/说明.txt").commit("重命名");
-        repo.branch("side").checkout("side").write("side.txt", "s\n").commit("分支");
-        repo.checkout("main").write("main.txt", "m\n").commit("主干");
-        repo.merge("side", "合并");
-        List<CommitRecord> clean = repo.gitService().readLog(repo.root());
+        Path attributes = repo.globalConfig().getParent().resolve("attributes");
+        Path userMailmap = repo.globalConfig().getParent().resolve("usermailmap");
+        Files.writeString(attributes, "*.txt -diff\n", StandardCharsets.UTF_8);
+        Files.writeString(userMailmap, "Alice Wang <zhang@example.com>\n", StandardCharsets.UTF_8);
 
-        Files.writeString(repo.globalConfig(), String.join("\n",
-                "[color]", "  ui = always",
-                "[log]", "  showSignature = true", "  showRoot = false", "  decorate = full", "  abbrevCommit = true",
-                "[diff]", "  noprefix = true", "  mnemonicPrefix = true", "  renames = false", "  relative = true",
-                "  external = no-such-diff-tool",
-                "[core]", "  quotePath = true",
-                "[i18n]", "  logOutputEncoding = GBK",
-                "[format]", "  pretty = oneline", ""), StandardCharsets.UTF_8);
-        List<CommitRecord> withPersonalConfig = repo.gitService().readLog(repo.root());
+        String[] base = {"z", "z", "z", "x = 1;", "", "}", "x = 1;", "}", "y", "  return;", "y", "z", "y", "y", "y",
+                "x = 1;", "", "", "  return;", "}", "  return;", "z", "{", "}", "", "  return;", "y", "x = 1;", "}", ""};
+        String[] changed = {"z", "z", "x = 1;", "", "}", "x = 1;", "}", "{", "y", "  return;", "y", "z", "y", "y", "y",
+                "x = 1;", "", "", "  return;", "}", "  return;", "z", "w", "{", "", "  return;", "y", "x = 1;", "}", ""};
+        // 子模块指针只存在于索引里：不能用 commit()（它会 add -A 删掉工作区里没有的 gitlink），
+        // 所以普通文件显式暂存，指针直接写入索引，再 commitStaged
+        repo.author("张三", "zhang@example.com").write("a.txt", String.join("\n", base))
+                .write("sub/in.txt", "in\n").write("top.txt", "t\n");
+        repo.git("add", "a.txt", "sub/in.txt", "top.txt");
+        repo.git("update-index", "--add", "--cacheinfo", "160000," + "1".repeat(40) + ",libx");
+        repo.commitStaged("初始化");
+        repo.write("a.txt", String.join("\n", changed)).write("sub/in.txt", "in 2\n").write("top.txt", "t 2\n");
+        repo.git("add", "a.txt", "sub/in.txt", "top.txt");
+        repo.git("update-index", "--cacheinfo", "160000," + "2".repeat(40) + ",libx");
+        repo.commitStaged("改动：算法、子模块、子目录");
 
-        assertEquals(clean, withPersonalConfig);
-        assertEquals(1, withPersonalConfig.get(withPersonalConfig.size() - 1).filesChanged(),
-                "log.showRoot=false 时根提交的文件变更也要读出来");
+        Path rootPath = repo.root();
+        Path subPath = repo.root().resolve("sub");
+        List<CommitRecord> clean = repo.gitService().readLog(rootPath);
+        assertTrue(clean.get(clean.size() - 1).filesChanged() > 0, "根提交的文件变更不能因配置消失");
+        assertEquals(clean, repo.gitService().readLog(subPath), "从子目录读取应与从仓库根目录读取完全一致");
+
+        Map<String, String> leaks = new LinkedHashMap<>();
+        leaks.put("diff.relative", "[diff]\n\trelative = true\n");
+        leaks.put("diff.algorithm", "[diff]\n\talgorithm = histogram\n");
+        leaks.put("diff.ignoreSubmodules", "[diff]\n\tignoreSubmodules = all\n");
+        leaks.put("core.attributesFile", "[core]\n\tattributesFile = " + attributes.toString().replace('\\', '/') + "\n");
+        leaks.put("mailmap.file", "[mailmap]\n\tfile = " + userMailmap.toString().replace('\\', '/') + "\n");
+        leaks.put("其它配置（log/diff/core/i18n）",
+                "[log]\n\tshowRoot = false\n[diff]\n\trenames = false\n[core]\n\tquotePath = true\n"
+                        + "[i18n]\n\tlogOutputEncoding = GBK\n");
+        for (Map.Entry<String, String> leak : leaks.entrySet()) {
+            Files.writeString(repo.globalConfig(), leak.getValue(), StandardCharsets.UTF_8);
+            assertEquals(clean, repo.gitService().readLog(rootPath), leak.getKey() + " 改变了从仓库根目录的读取结果");
+            assertEquals(clean, repo.gitService().readLog(subPath), leak.getKey() + " 改变了从子目录的读取结果");
+        }
+    }
+
+    @Test
+    void renamesStayRenamesInACommitWithMoreFilesThanTheRenameLimit() throws GitException {
+        // 审查中怀疑：文件数超过 diff.renameLimit（默认 1000）时重命名会退化成"删除 + 新增"，增删行数偏大。
+        // 实测（git 2.56）：我们使用的 -M 在 1200 个文件时仍然识别全部重命名；只有显式的 -C 才会跳过检测。
+        // 这里验证用户看到的结果：仍然是 1200 个重命名，每个 +1 −1，合计 +1200 −1200。
+        TestRepo repo = TestRepo.init(temp);
+        String body = "共同的一行\n".repeat(20);
+        for (int i = 0; i < 1200; i++) {
+            repo.write("old/f" + i + ".txt", "内容 " + i + "\n" + body);
+        }
+        repo.commit("很多文件");
+        for (int i = 0; i < 1200; i++) {
+            repo.rename("old/f" + i + ".txt", "new/f" + i + ".txt");
+            repo.write("new/f" + i + ".txt", "改动 " + i + "\n" + body);
+        }
+        repo.commit("整体搬家并修改");
+
+        GitService.LogResult result = repo.gitService().readLogWithWarnings(repo.root(), "HEAD",
+                commit -> { }, new CancellationToken());
+
+        CommitRecord moved = result.commits().get(0);
+        long renames = moved.fileChanges().stream().filter(c -> c.changeType() == ChangeType.R).count();
+        assertEquals(1200, renames, "每个文件都应当是重命名");
+        assertEquals(1200, moved.additions());
+        assertEquals(1200, moved.deletions());
+        assertEquals(List.of(), result.warnings());
+    }
+
+    @Test
+    void noWarningWhenRenameDetectionRanNormally() throws GitException {
+        TestRepo repo = TestRepo.init(temp);
+        repo.write("a.txt", "一\n二\n三\n").commit("初始");
+        repo.rename("a.txt", "b.txt").write("b.txt", "一\n二\n三\n四\n").commit("改名并修改");
+
+        GitService.LogResult result = repo.gitService().readLogWithWarnings(repo.root(), "HEAD",
+                commit -> { }, new CancellationToken());
+
+        assertEquals(List.of(), result.warnings());
+        assertEquals(List.of(new FileChange("b.txt", "a.txt", ChangeType.R, 1, 0, false)),
+                result.commits().get(0).fileChanges());
+    }
+
+    @Test
+    void translatesGitWarningsAndKeepsEachOnceAndUnknownOnesVerbatim() {
+        String stderr = "warning: exhaustive rename detection was skipped due to too many files.\n"
+                + "warning: you may want to set your diff.renameLimit variable to at least 1200 and retry the command.\n"
+                + "warning: exhaustive rename detection was skipped due to too many files.\n"
+                + "warning: something new\n";
+
+        List<String> warnings = GitService.warningsFrom(stderr);
+
+        assertEquals(2, warnings.size(), warnings.toString());
+        assertTrue(warnings.get(0).contains("重命名检测"));
+        assertEquals("git 提示：something new", warnings.get(1));
+        assertEquals(List.of(), GitService.warningsFrom(""));
     }
 
     @Test

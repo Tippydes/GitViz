@@ -22,11 +22,19 @@ public final class RepositorySession {
     private final HeadInfo head;
     private final List<CommitRecord> commits;
     private final Map<String, CommitRecord> commitsByHash;
+    private final List<String> warnings;
 
     /**
      * @param commits 已按显示顺序（作者时间倒序）排好的提交
      */
     public RepositorySession(Path repoRoot, HeadInfo head, List<CommitRecord> commits) {
+        this(repoRoot, head, commits, List.of());
+    }
+
+    /**
+     * @param warnings 读取过程中 git 给出的提示，面向用户（例如重命名检测被跳过）
+     */
+    public RepositorySession(Path repoRoot, HeadInfo head, List<CommitRecord> commits, List<String> warnings) {
         this.repoRoot = Objects.requireNonNull(repoRoot, "repoRoot");
         this.head = Objects.requireNonNull(head, "head");
         this.commits = List.copyOf(commits);
@@ -35,6 +43,12 @@ public final class RepositorySession {
             index.put(commit.hash(), commit);
         }
         this.commitsByHash = index;
+        this.warnings = List.copyOf(warnings);
+    }
+
+    /** 读取过程中的提示，没有时为空列表。 */
+    public List<String> warnings() {
+        return warnings;
     }
 
     public Path repoRoot() {

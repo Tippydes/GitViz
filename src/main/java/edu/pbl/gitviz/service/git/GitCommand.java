@@ -60,11 +60,16 @@ public final class GitCommand {
             }
         }
         for (String option : options) {
-            if (option.equals("--output") || option.startsWith("--output=")) {
+            String name = option.contains("=") ? option.substring(0, option.indexOf('=')) : option;
+            if (name.equals("--output") || name.startsWith("--output=")) {
                 throw new IllegalArgumentException("--output 会写文件，不允许使用");
             }
-            if (option.equals("--ext-diff")) {
+            if (name.equals("--ext-diff")) {
                 throw new IllegalArgumentException("--ext-diff 会运行外部程序，不允许使用");
+            }
+            // git 接受任何无歧义的长选项前缀，所以 --textc、--textco 等同样会打开 textconv（会运行外部程序）
+            if (name.length() >= "--textc".length() && "--textconv".startsWith(name)) {
+                throw new IllegalArgumentException("--textconv 会运行外部程序，不允许使用: " + option);
             }
         }
         return new GitCommand(subcommand, copy);

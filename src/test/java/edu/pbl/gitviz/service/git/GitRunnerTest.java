@@ -7,6 +7,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -31,16 +32,21 @@ class GitRunnerTest {
 
         List<String> commandLine = runner.commandLine(repo, GitCommand.of("log", "HEAD"));
 
-        assertEquals(List.of("git", "-C", repo.toString(), "-c", "i18n.logOutputEncoding=UTF-8", "log", "HEAD"),
-                commandLine);
+        List<String> expected = new ArrayList<>(List.of("git", "-C", repo.toString()));
+        GitRunner.PINNED_CONFIG.forEach(pin -> expected.addAll(List.of("-c", pin)));
+        expected.addAll(List.of("log", "HEAD"));
+        assertEquals(expected, commandLine);
+        assertTrue(commandLine.contains("i18n.logOutputEncoding=UTF-8"), "输出必须固定为 UTF-8");
     }
 
     @Test
     void omitsTheWorkingDirectoryWhenNoneIsGiven() {
         GitRunner runner = new GitRunner("git", Duration.ofSeconds(5), Map.of());
 
-        assertEquals(List.of("git", "-c", "i18n.logOutputEncoding=UTF-8", "--version"),
-                runner.commandLine(null, GitCommand.of("--version")));
+        List<String> expected = new ArrayList<>(List.of("git"));
+        GitRunner.PINNED_CONFIG.forEach(pin -> expected.addAll(List.of("-c", pin)));
+        expected.add("--version");
+        assertEquals(expected, runner.commandLine(null, GitCommand.of("--version")));
     }
 
     @Test

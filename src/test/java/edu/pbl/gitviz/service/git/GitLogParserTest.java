@@ -201,11 +201,48 @@ class GitLogParserTest {
     }
 
     @Test
-    void rawEntryWithoutNumstatCountsAsZeroLines() {
-        CommitRecord commit = GitLogParser.parse(bytes(header(H1, "", "a", "a@x", 1L, "+0800", "s"),
-                "\n:160000 160000 1111111 2222222 M" + NUL + "submodule" + NUL)).get(0);
+    void rawEntryWithoutNumstatIsAParseErrorNotZeroLines() {
+        // git 会为每个变更文件给出增删行数；缺失说明输出不完整，不能静默当成 0 行
+        assertThrows(GitOutputParseException.class, () -> GitLogParser.parse(bytes(
+                header(H1, "", "a", "a@x", 1L, "+0800", "s"),
+                "\n:160000 160000 1111111 2222222 M" + NUL + "submodule" + NUL)));
+    }
 
-        assertEquals(List.of(new FileChange("submodule", null, ChangeType.M, 0, 0, false)), commit.fileChanges());
+    @Test
+    void invalidUtf8PathsThatDecodeToTheSameTextKeepTheirOwnCounts() {
+        // 两个不同的非法字节序列按 UTF-8 解码都变成 U+FFFD：按字节配对，各自拿到自己的增删行数
+        byte[] first = {(byte) 0xfe, (byte) 0xff, '.', 't', 'x', 't'};
+        byte[] second = {(byte) 0xff, (byte) 0xfe, '.', 't', 'x', 't'};
+        byte[] output = concat(
+                bytes(header(H1, "", "a", "a@x", 1L, "+0800", "s"),
+                        "\n:100644 100644 1111111 2222222 M" + NUL),
+                first, bytes(NUL),
+                bytes(":100644 100644 1111111 3333333 M" + NUL),
+                second, bytes(NUL),
+                bytes("8\t0\t"), first, bytes(NUL),
+                bytes("2\t0\t"), second, bytes(NUL));
+
+        List<FileChange> changes = GitLogParser.parse(output).get(0).fileChanges();
+
+        assertEquals(2, changes.size());
+        assertEquals(8, changes.get(0).additions(), "第一个文件应得到自己的 +8");
+        assertEquals(2, changes.get(1).additions(), "第二个文件应得到自己的 +2，而不是被覆盖");
+    }
+
+    @Test
+    void theSameFileListedTwiceInNumstatIsAParseError() {
+        assertThrows(GitOutputParseException.class, () -> GitLogParser.parse(bytes(
+                header(H1, "", "a", "a@x", 1L, "+0800", "s"),
+                "\n:100644 100644 1111111 2222222 M" + NUL + "a.txt" + NUL
+                        + "1\t0\ta.txt" + NUL + "2\t0\ta.txt" + NUL)));
+    }
+
+    private static byte[] concat(byte[]... parts) {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        for (byte[] part : parts) {
+            out.writeBytes(part);
+        }
+        return out.toByteArray();
     }
 
     @Test

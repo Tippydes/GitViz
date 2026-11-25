@@ -34,6 +34,7 @@ public final class WorkspaceView extends BorderPane {
     private final Label headLabel = new Label();
     private final Tooltip headTooltip = new Tooltip();
     private final Label commitCountLabel = new Label();
+    private final Label warningLabel = new Label();
     private final Label shortcutsLabel = new Label();
     private final ToggleButton historyNav = new ToggleButton("提交历史");
     private final HistoryView historyView;
@@ -61,6 +62,10 @@ public final class WorkspaceView extends BorderPane {
             headLabel.setTooltip(null);
         }
         commitCountLabel.setText("共 " + session.commitCount() + " 条提交");
+        // git 的提示（例如重命名检测被跳过）：状态栏显示摘要，悬停显示全文
+        warningLabel.setText(String.join("；", session.warnings()));
+        warningLabel.setTooltip(session.warnings().isEmpty() ? null
+                : new Tooltip(String.join("\n", session.warnings())));
         historyView.setCommits(session.commits());
     }
 
@@ -119,7 +124,8 @@ public final class WorkspaceView extends BorderPane {
     private HBox createStatusBar() {
         Pane spacer = new Pane();
         HBox.setHgrow(spacer, Priority.ALWAYS);
-        HBox statusBar = new HBox(12, commitCountLabel, spacer, shortcutsLabel);
+        warningLabel.getStyleClass().add("status-warning");
+        HBox statusBar = new HBox(12, commitCountLabel, warningLabel, spacer, shortcutsLabel);
         statusBar.setAlignment(Pos.CENTER_LEFT);
         statusBar.getStyleClass().add("status-bar");
         return statusBar;

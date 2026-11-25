@@ -52,6 +52,21 @@ class GitCommandTest {
     }
 
     @Test
+    void rejectsTextconvEvenWhenAbbreviated() {
+        // git 接受 --textconv 的任何无歧义前缀（如 --textc），textconv 会运行配置里指定的外部程序
+        assertThrows(IllegalArgumentException.class, () -> GitCommand.of("show", "HEAD", "--textconv"));
+        assertThrows(IllegalArgumentException.class, () -> GitCommand.of("show", "HEAD", "--textc"));
+        assertThrows(IllegalArgumentException.class, () -> GitCommand.of("show", "HEAD", "--textco"));
+    }
+
+    @Test
+    void stillAllowsTheOptionsThatOnlyLookSimilar() {
+        assertDoesNotThrow(() -> GitCommand.of("show", "HEAD", "--no-textconv"));
+        assertDoesNotThrow(() -> GitCommand.of("show", "HEAD", "--text")); // --text 是 -a，不运行外部程序
+        assertDoesNotThrow(() -> GitCommand.of("log", "HEAD", "--no-ext-diff"));
+    }
+
+    @Test
     void argumentsAfterTheSeparatorArePathsNotOptions() {
         GitCommand command = GitCommand.of("show", "HEAD", "--", "--output=名字奇怪的文件.txt");
         assertEquals(List.of("show", "HEAD", "--", "--output=名字奇怪的文件.txt"), command.toArgumentList());

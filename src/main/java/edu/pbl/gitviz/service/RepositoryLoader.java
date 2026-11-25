@@ -58,9 +58,9 @@ public final class RepositoryLoader {
     public RepositorySession load(Path repoPath, CancellationToken token) throws GitException {
         Path root = repoPath.toAbsolutePath().normalize();
         HeadInfo head = git.readHead(root, token);
-        List<CommitRecord> commits = new ArrayList<>(
-                git.readLog(root, head.hash(), commit -> { }, token));
+        GitService.LogResult log = git.readLogWithWarnings(root, head.hash(), commit -> { }, token);
+        List<CommitRecord> commits = new ArrayList<>(log.commits());
         commits.sort(NEWEST_FIRST);
-        return new RepositorySession(root, head, commits);
+        return new RepositorySession(root, head, commits, log.warnings());
     }
 }

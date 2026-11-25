@@ -98,6 +98,10 @@
     -fx-border-color: -gv-border transparent transparent transparent;
 }
 
+.status-bar .status-warning {
+    -fx-text-fill: #9a6700;
+}
+
 .status-bar .label {
     -fx-text-fill: -gv-muted;
     -fx-font-size: 12px;

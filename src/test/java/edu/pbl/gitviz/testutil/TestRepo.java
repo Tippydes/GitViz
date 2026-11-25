@@ -154,6 +154,14 @@ public final class TestRepo {
         return commitWith(message);
     }
 
+    /**
+     * 只提交索引里已经暂存的内容，不做 {@code git add -A}。
+     * 子模块指针（gitlink）在工作区里没有对应目录，{@code add -A} 会把它从索引里删掉，所以需要这个方法。
+     */
+    public String commitStaged(String message) {
+        return commitWith(message);
+    }
+
     /** 不改任何文件的空提交。 */
     public String commitEmpty(String message) {
         return commitWith(message, "--allow-empty");

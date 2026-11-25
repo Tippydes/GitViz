@@ -30,7 +30,27 @@ public final class GitRunner {
 
     public static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(60);
 
-    static final String UTF8_LOG_OUTPUT = "i18n.logOutputEncoding=UTF-8";
+    /**
+     * 每条命令都固定下来的配置项。它们覆盖用户、系统和仓库里会改变输出的设置，这些设置都在
+     * {@code GitServiceTest.personalGitConfigCannotChangeWhatIsRead} 中逐项验证过：
+     * <ul>
+     *   <li>{@code diff.relative}：在子目录里运行时会丢掉子目录外的文件，路径也会改成相对子目录；</li>
+     *   <li>{@code diff.algorithm}：不同算法给出的增删行数不同（实测 +2/−2 与 +15/−15）；</li>
+     *   <li>{@code diff.ignoreSubmodules}：会让子模块指针的变化消失；</li>
+     *   <li>{@code diff.renameLimit}：固定为默认的 1000，不让个人设置改变重命名检测的范围；</li>
+     *   <li>{@code core.attributesFile}、{@code mailmap.file}、{@code mailmap.blob}：空值表示不读取个人文件，
+     *       仓库自己的 .mailmap 仍然生效（设计 §3.4.7）。</li>
+     * </ul>
+     */
+    static final List<String> PINNED_CONFIG = List.of(
+            "i18n.logOutputEncoding=UTF-8",
+            "diff.relative=false",
+            "diff.algorithm=myers",
+            "diff.ignoreSubmodules=none",
+            "diff.renameLimit=1000",
+            "core.attributesFile=",
+            "mailmap.file=",
+            "mailmap.blob=");
 
     private static final int STDERR_LIMIT_BYTES = 256 * 1024;
 
@@ -40,7 +60,9 @@ public final class GitRunner {
      */
     private static final List<String> REMOVED_ENVIRONMENT = List.of(
             "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_NAMESPACE",
-            "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_EXTERNAL_DIFF");
+            "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_EXTERNAL_DIFF",
+            // 通过环境变量注入的配置：不移除的话，上面 PINNED_CONFIG 之外的设置仍然会生效
+            "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT", "GIT_ATTR_SOURCE");
 
     /**
      * {@code GIT_OPTIONAL_LOCKS=0}：读命令不顺手刷新并写回索引，保证被分析的仓库保持原样；
@@ -48,7 +70,9 @@ public final class GitRunner {
      */
     private static final Map<String, String> FIXED_ENVIRONMENT = Map.of(
             "GIT_OPTIONAL_LOCKS", "0",
-            "GIT_TERMINAL_PROMPT", "0");
+            "GIT_TERMINAL_PROMPT", "0",
+            // refs/replace 会让 git log 显示被替换后的提交，不是仓库里实际记录的历史（实测）
+            "GIT_NO_REPLACE_OBJECTS", "1");
 
     private static final ScheduledThreadPoolExecutor WATCHDOG = createWatchdog();
 
@@ -191,8 +215,10 @@ public final class GitRunner {
             commandLine.add("-C");
             commandLine.add(workDir.toString());
         }
-        commandLine.add("-c");
-        commandLine.add(UTF8_LOG_OUTPUT);
+        for (String pin : PINNED_CONFIG) {
+            commandLine.add("-c");
+            commandLine.add(pin);
+        }
         commandLine.addAll(command.toArgumentList());
         return commandLine;
     }

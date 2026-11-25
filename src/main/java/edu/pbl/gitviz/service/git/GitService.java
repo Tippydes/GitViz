@@ -5,8 +5,10 @@ import edu.pbl.gitviz.model.HeadInfo;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Consumer;
 
 /**
@@ -18,12 +20,13 @@ public final class GitService {
      * §3.4.7 的 git log 选项。在设计文档的基础上加了几项，让输出不受用户 Git 配置影响：
      * {@code --root}（{@code log.showRoot=false} 会隐藏根提交的文件变更）、
      * {@code --no-textconv}（textconv 会运行外部程序并改变增删行统计）、
-     * {@code --no-color}、{@code --no-show-signature}（签名校验信息会混进输出）。
+     * {@code --no-ext-diff}（外部差异程序），{@code --no-color}、{@code --no-show-signature}（签名校验信息会混进输出）。
+     * 上面的 {@link GitRunner#PINNED_CONFIG} 与 {@code GIT_NO_REPLACE_OBJECTS} 也固定在每条命令上。
      */
     static final List<String> LOG_OPTIONS = List.of(
             GitLogParser.FORMAT,
             "--raw", "--numstat", "-M", "-z", "--diff-merges=first-parent",
-            "--root", "--no-textconv", "--no-color", "--no-show-signature");
+            "--root", "--no-textconv", "--no-ext-diff", "--no-color", "--no-show-signature");
 
     private final GitRunner runner;
 
@@ -70,6 +73,24 @@ public final class GitService {
      */
     public List<CommitRecord> readLog(Path repo, String revisions, Consumer<CommitRecord> onCommit,
                                       CancellationToken token) throws GitException {
+        return readLogWithWarnings(repo, revisions, onCommit, token).commits();
+    }
+
+    /** 读取结果，连同 git 在读取过程中给出的提示（例如重命名检测因文件过多被跳过）。 */
+    public record LogResult(List<CommitRecord> commits, List<String> warnings) {
+
+        public LogResult {
+            commits = List.copyOf(commits);
+            warnings = List.copyOf(warnings);
+        }
+    }
+
+    /**
+     * 同 {@link #readLog}，但保留 git 的提示。提示写在 stderr 里：不翻译的话，大提交的重命名被跳过时
+     * 界面上的增删行数会偏大，用户却没有任何说明。
+     */
+    public LogResult readLogWithWarnings(Path repo, String revisions, Consumer<CommitRecord> onCommit,
+                                         CancellationToken token) throws GitException {
         Objects.requireNonNull(revisions, "revisions");
         if (revisions.isEmpty() || revisions.startsWith("-")) {
             throw new IllegalArgumentException("无效的版本范围: " + revisions);
@@ -80,10 +101,31 @@ public final class GitService {
         args.add("--");
 
         List<CommitRecord> commits = new ArrayList<>();
-        runner.run(repo, GitCommand.of("log", args), stdout -> GitLogParser.parse(stdout, commit -> {
-            commits.add(commit);
-            onCommit.accept(commit);
-        }), token).requireSuccess();
-        return List.copyOf(commits);
+        GitResult<Integer> result = runner.run(repo, GitCommand.of("log", args),
+                stdout -> GitLogParser.parse(stdout, commit -> {
+                    commits.add(commit);
+                    onCommit.accept(commit);
+                }), token).requireSuccess();
+        return new LogResult(commits, warningsFrom(result.stderr()));
+    }
+
+    /**
+     * 把 git 的提示翻译成面向用户的中文。每个提交都可能重复输出同一条提示，所以只保留一次；
+     * 没有识别的提示原样保留，前面标明来源。
+     */
+    static List<String> warningsFrom(String stderr) {
+        Set<String> warnings = new LinkedHashSet<>();
+        for (String line : stderr.split("\\R")) {
+            String text = line.strip().replaceFirst("^warning:\\s*", "");
+            if (text.isEmpty()) {
+                continue;
+            }
+            if (text.contains("rename detection was skipped")) {
+                warnings.add("文件太多，git 跳过了重命名检测：重命名的文件会显示为“删除 + 新增”，增删行数可能偏大。");
+            } else if (!text.contains("diff.renameLimit")) { // 同一件事的第二行，已由上面的提示说明
+                warnings.add("git 提示：" + text);
+            }
+        }
+        return List.copyOf(warnings);
     }
 }

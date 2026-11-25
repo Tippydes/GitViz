@@ -178,66 +178,92 @@ public final class GitLogParser {
         return zone.charAt(0) == '-' ? -total : total;
     }
 
+    /**
+     * 解析文件变更。原始条目（raw）与增删行条目（numstat）都按字节配对：git 允许路径里有任意字节，
+     * 按 UTF-8 解码后不同的路径可能变成同一个字符串（例如两个不同的非法字节序列都变成 U+FFFD），
+     * 不能用解码后的字符串配对。显示用的路径才解码。
+     */
     private static List<FileChange> parseChanges(byte[] b, int from, int to) {
-        List<String> tokens = nulTerminatedTokens(b, from, to);
+        List<byte[]> tokens = nulTerminatedTokens(b, from, to);
         List<RawEntry> raw = new ArrayList<>();
         Map<String, NumstatEntry> numstat = new HashMap<>();
         int i = 0;
         while (i < tokens.size()) {
-            String token = tokens.get(i++);
-            if (token.startsWith(":")) {
-                if (token.startsWith("::")) {
-                    throw new GitOutputParseException("不支持组合差异格式：" + token);
+            byte[] token = tokens.get(i++);
+            if (token.length > 0 && token[0] == ':') {
+                String status = ascii(token, 0, token.length);
+                if (status.startsWith("::")) {
+                    throw new GitOutputParseException("不支持组合差异格式：" + status);
                 }
-                ChangeType type = ChangeType.fromRawStatus(token.substring(token.lastIndexOf(' ') + 1));
-                String oldPath = null;
+                ChangeType type = ChangeType.fromRawStatus(status.substring(status.lastIndexOf(' ') + 1));
+                byte[] oldPath = null;
                 if (type.hasOldPath()) {
                     oldPath = next(tokens, i++);
                 }
-                String path = next(tokens, i++);
+                byte[] path = next(tokens, i++);
                 raw.add(new RawEntry(type, path, oldPath));
             } else {
-                int tab1 = token.indexOf('\t');
-                int tab2 = tab1 < 0 ? -1 : token.indexOf('\t', tab1 + 1);
+                int tab1 = indexOf(token, (byte) '\t', 0, token.length);
+                int tab2 = tab1 < 0 ? -1 : indexOf(token, (byte) '\t', tab1 + 1, token.length);
                 if (tab2 < 0) {
-                    throw new GitOutputParseException("无法识别的 numstat 条目：" + token);
+                    throw new GitOutputParseException("无法识别的 numstat 条目：" + ascii(token, 0, token.length));
                 }
-                String added = token.substring(0, tab1);
-                String deleted = token.substring(tab1 + 1, tab2);
-                String path = token.substring(tab2 + 1);
-                if (path.isEmpty()) {          // 重命名 / 复制：后面跟着旧路径和新路径
+                NumstatEntry stat = NumstatEntry.of(ascii(token, 0, tab1), ascii(token, tab1 + 1, tab2));
+                byte[] path = Arrays.copyOfRange(token, tab2 + 1, token.length);
+                if (path.length == 0) {          // 重命名 / 复制：后面跟着旧路径和新路径
                     next(tokens, i++);
                     path = next(tokens, i++);
                 }
-                numstat.putIfAbsent(path, NumstatEntry.of(added, deleted));
+                if (numstat.put(key(path), stat) != null) {
+                    throw new GitOutputParseException("同一个文件出现了两次增删行：" + display(path));
+                }
             }
         }
         if (raw.isEmpty() && !numstat.isEmpty()) {
-            throw new GitOutputParseException("只有 numstat 没有 raw 条目");
+            throw new GitOutputParseException("只有增删行数，没有文件变更条目");
         }
         List<FileChange> changes = new ArrayList<>(raw.size());
         for (RawEntry entry : raw) {
-            NumstatEntry stat = numstat.getOrDefault(entry.path(), NumstatEntry.NONE);
-            changes.add(new FileChange(entry.path(), entry.oldPath(), entry.type(),
-                    stat.additions(), stat.deletions(), stat.binary()));
+            NumstatEntry stat = numstat.get(key(entry.path()));
+            if (stat == null) {
+                // git 会为每个变更文件给出增删行数；缺失说明输出不完整，不能静默当成 0 行
+                throw new GitOutputParseException("没有找到文件的增删行数：" + display(entry.path()));
+            }
+            changes.add(new FileChange(display(entry.path()),
+                    entry.oldPath() == null ? null : display(entry.oldPath()),
+                    entry.type(), stat.additions(), stat.deletions(), stat.binary()));
         }
         return changes;
     }
 
-    private static String next(List<String> tokens, int index) {
+    /** 字节路径的比较键。ISO-8859-1 与字节一一对应，两个不同的字节序列一定得到不同的键。 */
+    private static String key(byte[] path) {
+        return new String(path, StandardCharsets.ISO_8859_1);
+    }
+
+    /** 显示用的路径：UTF-8 解码，非法字节显示为 U+FFFD。 */
+    private static String display(byte[] path) {
+        return new String(path, StandardCharsets.UTF_8);
+    }
+
+    private static String ascii(byte[] b, int from, int to) {
+        return new String(b, from, to - from, StandardCharsets.US_ASCII);
+    }
+
+    private static byte[] next(List<byte[]> tokens, int index) {
         if (index >= tokens.size()) {
             throw new GitOutputParseException("文件变更条目缺少路径");
         }
         return tokens.get(index);
     }
 
-    /** 按 NUL 切分；最后一段必须以 NUL 结尾，否则说明输出被截断。 */
-    private static List<String> nulTerminatedTokens(byte[] b, int from, int to) {
-        List<String> tokens = new ArrayList<>();
+    /** 按 NUL 切分成字节数组；最后一段必须以 NUL 结尾，否则说明输出被截断。 */
+    private static List<byte[]> nulTerminatedTokens(byte[] b, int from, int to) {
+        List<byte[]> tokens = new ArrayList<>();
         int start = from;
         for (int i = from; i < to; i++) {
             if (b[i] == NUL) {
-                tokens.add(text(b, start, i));
+                tokens.add(Arrays.copyOfRange(b, start, i));
                 start = i + 1;
             }
         }
@@ -265,12 +291,10 @@ public final class GitLogParser {
         return text.replace('\u001f', '|').replace('\0', '␀');
     }
 
-    private record RawEntry(ChangeType type, String path, String oldPath) {
+    private record RawEntry(ChangeType type, byte[] path, byte[] oldPath) {
     }
 
     private record NumstatEntry(int additions, int deletions, boolean binary) {
-
-        static final NumstatEntry NONE = new NumstatEntry(0, 0, false);
 
         static NumstatEntry of(String added, String deleted) {
             if (added.equals("-") && deleted.equals("-")) {
