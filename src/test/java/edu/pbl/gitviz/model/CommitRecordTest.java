@@ -3,6 +3,7 @@ package edu.pbl.gitviz.model;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -16,7 +17,7 @@ class CommitRecordTest {
     private static final String H3 = "c".repeat(40);
 
     private static CommitRecord commit(List<String> parents, List<FileChange> changes) {
-        return new CommitRecord(H1, parents, "作者", "a@example.com", 1L, 480, "说明", changes);
+        return new CommitRecord(H1, parents, "作者", "a@example.com", Optional.of(new AuthorTime(1L, 480)), "说明", changes);
     }
 
     @Test
@@ -44,11 +45,16 @@ class CommitRecordTest {
     }
 
     @Test
+    void anUnknownAuthorTimeIsAllowed() {
+        CommitRecord commit = new CommitRecord(H1, List.of(), "n", "e", Optional.empty(), "s", List.of());
+
+        assertTrue(commit.authorTime().isEmpty());
+    }
+
+    @Test
     void rejectsInvalidValues() {
         assertThrows(IllegalArgumentException.class,
-                () -> new CommitRecord("ABC", List.of(), "n", "e", 1L, 0, "s", List.of()));
-        assertThrows(IllegalArgumentException.class,
-                () -> new CommitRecord(H1, List.of(), "n", "e", 1L, 900, "s", List.of()));
+                () -> new CommitRecord("ABC", List.of(), "n", "e", Optional.of(new AuthorTime(1L, 0)), "s", List.of()));
         assertThrows(IllegalArgumentException.class,
                 () -> new FileChange("a.txt", "old.txt", ChangeType.M, 1, 0, false));
         assertThrows(IllegalArgumentException.class,

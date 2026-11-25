@@ -1,5 +1,6 @@
 package edu.pbl.gitviz.service.git;
 
+import edu.pbl.gitviz.model.AuthorTime;
 import edu.pbl.gitviz.model.ChangeType;
 import edu.pbl.gitviz.model.CommitRecord;
 import edu.pbl.gitviz.model.FileChange;
@@ -14,6 +15,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.Consumer;
 
 /**
@@ -115,8 +117,8 @@ public final class GitLogParser {
             List<String> parents = parents(text(b, separators[0] + 1, separators[1]));
             String authorName = text(b, separators[1] + 1, separators[2]);
             String authorEmail = text(b, separators[2] + 1, separators[3]);
-            long authorTime = Long.parseLong(text(b, separators[3] + 1, separators[4]));
-            int tzOffset = tzOffsetMinutes(text(b, separators[4] + 1, separators[5]));
+            Optional<AuthorTime> authorTime = parseAuthorTime(
+                    text(b, separators[3] + 1, separators[4]), text(b, separators[4] + 1, separators[5]));
 
             int subjectStart = separators[5] + 1;
             int subjectEnd = indexOf(b, NUL, subjectStart, to);
@@ -132,7 +134,7 @@ public final class GitLogParser {
                 diffStart++;
             }
             List<FileChange> changes = parseChanges(b, diffStart, to);
-            return new CommitRecord(hash, parents, authorName, authorEmail, authorTime, tzOffset, subject, changes);
+            return new CommitRecord(hash, parents, authorName, authorEmail, authorTime, subject, changes);
         } catch (GitOutputParseException e) {
             throw new GitOutputParseException("提交 " + hash + "：" + e.getMessage(), e);
         } catch (IllegalArgumentException e) {
@@ -142,6 +144,26 @@ public final class GitLogParser {
 
     private static List<String> parents(String field) {
         return field.isEmpty() ? List.of() : Arrays.asList(field.split(" "));
+    }
+
+    /**
+     * 解析作者时间。git 无法表示某个时间时，{@code %at} 与 {@code %ai} 都输出空串：1970 年以前的提交
+     * （实测 git 2.56 对所有负数时间都如此），时间未知，提交照常保留。
+     * 时间超出 {@link AuthorTime} 能显示的范围时同样视为未知，避免一条异常提交让整个仓库打不开。
+     * 只有 {@code %at} 有值、并且在范围内、而 {@code %ai} 为空，才是格式错误。
+     */
+    static Optional<AuthorTime> parseAuthorTime(String epochSeconds, String isoDate) {
+        if (epochSeconds.isEmpty()) {
+            return Optional.empty();
+        }
+        long epoch = Long.parseLong(epochSeconds);
+        if (!AuthorTime.isDisplayable(epoch)) {
+            return Optional.empty();
+        }
+        if (isoDate.isEmpty()) {
+            throw new GitOutputParseException("作者时间缺少时区（%at=\"" + epochSeconds + "\"，%ai 为空）");
+        }
+        return Optional.of(new AuthorTime(epoch, tzOffsetMinutes(isoDate)));
     }
 
     /** {@code %ai} 形如 {@code 2026-11-02 10:00:00 -0530}，只取末尾的时区，换算为分钟。 */

@@ -1,9 +1,8 @@
 package edu.pbl.gitviz.model;
 
-import java.time.Instant;
-import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.regex.Pattern;
 
 /**
@@ -11,23 +10,19 @@ import java.util.regex.Pattern;
  *
  * <p>界面上的"提交时间"指作者时间 {@code authorTime}（§3.4.7）。
  *
- * @param hash            完整哈希，40 位（SHA-1）或 64 位（SHA-256）小写十六进制
- * @param parentHashes    父提交哈希；根提交为空，两个及以上为合并提交
- * @param authorName      作者名（已应用 .mailmap）
- * @param authorEmail     作者邮箱（已应用 .mailmap，保留原始大小写，可能为空串）
- * @param authorTime      作者时间，Unix 秒
- * @param tzOffsetMinutes 作者时间的时区偏移，单位分钟，如 +08:00 为 480
- * @param subject         提交说明首行，可能为空串
- * @param fileChanges     文件变更；合并提交为相对第一父提交的变更，空提交为空列表
+ * @param hash         完整哈希，40 位（SHA-1）或 64 位（SHA-256）小写十六进制
+ * @param parentHashes 父提交哈希；根提交为空，两个及以上为合并提交
+ * @param authorName   作者名（已应用 .mailmap）
+ * @param authorEmail  作者邮箱（已应用 .mailmap，保留原始大小写，可能为空串）
+ * @param authorTime   作者时间；git 无法给出时间时为 empty（如 1970 年以前的提交），界面显示为"未知"，
+ *                     排序与筛选的规则见 §3.4.7
+ * @param subject      提交说明首行，可能为空串
+ * @param fileChanges  文件变更；合并提交为相对第一父提交的变更，空提交为空列表
  */
 public record CommitRecord(String hash, List<String> parentHashes, String authorName, String authorEmail,
-                           long authorTime, int tzOffsetMinutes, String subject, List<FileChange> fileChanges) {
+                           Optional<AuthorTime> authorTime, String subject, List<FileChange> fileChanges) {
 
     private static final Pattern HASH = Pattern.compile("[0-9a-f]{40}|[0-9a-f]{64}");
-
-    /** 时区偏移的取值范围（§3.4.7 tz_offset：−720～840 分钟）。 */
-    public static final int MIN_TZ_OFFSET = -720;
-    public static final int MAX_TZ_OFFSET = 840;
 
     public CommitRecord {
         requireHash(hash, "hash");
@@ -35,14 +30,9 @@ public record CommitRecord(String hash, List<String> parentHashes, String author
         parentHashes.forEach(p -> requireHash(p, "parentHash"));
         Objects.requireNonNull(authorName, "authorName");
         Objects.requireNonNull(authorEmail, "authorEmail");
+        Objects.requireNonNull(authorTime, "authorTime");
         Objects.requireNonNull(subject, "subject");
         fileChanges = List.copyOf(fileChanges);
-        if (authorTime < 0) {
-            throw new IllegalArgumentException("authorTime 不能为负: " + authorTime);
-        }
-        if (tzOffsetMinutes < MIN_TZ_OFFSET || tzOffsetMinutes > MAX_TZ_OFFSET) {
-            throw new IllegalArgumentException("时区偏移超出范围: " + tzOffsetMinutes);
-        }
     }
 
     private static void requireHash(String value, String name) {
@@ -85,13 +75,5 @@ public record CommitRecord(String hash, List<String> parentHashes, String author
             sum += change.deletions();
         }
         return sum;
-    }
-
-    public Instant authorInstant() {
-        return Instant.ofEpochSecond(authorTime);
-    }
-
-    public ZoneOffset authorZoneOffset() {
-        return ZoneOffset.ofTotalSeconds(tzOffsetMinutes * 60);
     }
 }

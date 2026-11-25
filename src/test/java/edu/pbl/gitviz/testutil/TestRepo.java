@@ -212,6 +212,80 @@ public final class TestRepo {
         }
     }
 
+    /**
+     * 用 {@code git fast-import} 写入一条作者时间由调用方指定的提交，可以是 1970 年以前。
+     * {@code git commit} 拒绝 1970 年以前的日期，所以用这个方法造"时间未知"的历史。
+     *
+     * <p>作者名和提交说明经标准输入以 UTF-8 字节传入，不走进程参数，因此不受平台默认字符集影响。
+     * 提交写到当前分支（如果 HEAD 已经有提交，新提交接在它后面）。
+     *
+     * @param epochSeconds 作者和提交者时间，Unix 秒，可为负
+     * @param timezone     形如 {@code +0800} 的时区
+     */
+    public String importCommit(String name, String email, long epochSeconds, String timezone, String subject,
+                               String relativePath, String content) {
+        String parent = headOrNull();
+        byte[] stream = fastImportStream(name, email, epochSeconds, timezone, subject, parent, relativePath, content);
+        ProcessBuilder builder = new ProcessBuilder("git", "fast-import", "--quiet").directory(root.toFile());
+        builder.environment().putAll(isolatedEnvironment());
+        try {
+            Process process = builder.start();
+            CompletableFuture<String> stderr = CompletableFuture.supplyAsync(() -> readUtf8(process.getErrorStream()));
+            try (var in = process.getOutputStream()) {
+                in.write(stream);
+            }
+            readUtf8(process.getInputStream());
+            int exitCode = process.waitFor();
+            if (exitCode != 0) {
+                throw new IllegalStateException("fast-import 失败（退出码 " + exitCode + "）：" + stderr.join());
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(e);
+        }
+        git("reset", "-q", "--hard", "main");
+        return head();
+    }
+
+    /** fast-import 的数据流。长度必须是字节数，所以用 UTF-8 字节计算。parent 为空时写根提交。 */
+    private static byte[] fastImportStream(String name, String email, long epochSeconds, String timezone,
+                                           String subject, String parent, String relativePath, String content) {
+        byte[] message = subject.getBytes(StandardCharsets.UTF_8);
+        byte[] body = content.getBytes(StandardCharsets.UTF_8);
+        byte[] identity = (name + " <" + email + "> " + epochSeconds + " " + timezone).getBytes(StandardCharsets.UTF_8);
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        out.writeBytes("commit refs/heads/main\nmark :1\n".getBytes(StandardCharsets.US_ASCII));
+        out.writeBytes(("author ").getBytes(StandardCharsets.US_ASCII));
+        out.writeBytes(identity);
+        out.writeBytes("\ncommitter ".getBytes(StandardCharsets.US_ASCII));
+        out.writeBytes(identity);
+        out.writeBytes("\n".getBytes(StandardCharsets.US_ASCII));
+        writeData(out, message);
+        if (parent != null) {
+            out.writeBytes(("from " + parent + "\n").getBytes(StandardCharsets.US_ASCII));
+        }
+        out.writeBytes(("M 100644 inline " + relativePath + "\n").getBytes(StandardCharsets.UTF_8));
+        writeData(out, body);
+        return out.toByteArray();
+    }
+
+    /** 当前 HEAD；仓库还没有提交时为 null。 */
+    private String headOrNull() {
+        try {
+            return head();
+        } catch (IllegalStateException noCommitsYet) {
+            return null;
+        }
+    }
+
+    private static void writeData(java.io.ByteArrayOutputStream out, byte[] bytes) {
+        out.writeBytes(("data " + bytes.length + "\n").getBytes(StandardCharsets.US_ASCII));
+        out.writeBytes(bytes);
+        out.writeBytes("\n".getBytes(StandardCharsets.US_ASCII));
+    }
+
     private String commitWith(String message, String... extraArgs) {
         writeIdentity();
         List<String> args = new ArrayList<>(List.of("commit", "-q", "--allow-empty-message", "--cleanup=verbatim",

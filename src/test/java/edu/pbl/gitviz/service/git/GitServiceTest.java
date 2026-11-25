@@ -1,5 +1,6 @@
 package edu.pbl.gitviz.service.git;
 
+import edu.pbl.gitviz.model.AuthorTime;
 import edu.pbl.gitviz.model.ChangeType;
 import edu.pbl.gitviz.model.CommitRecord;
 import edu.pbl.gitviz.model.FileChange;
@@ -93,8 +94,8 @@ class GitServiceTest {
         assertEquals("初始化项目, \"第一版\"", commit.subject());
         assertEquals("张三", commit.authorName());
         assertEquals("zhang@example.com", commit.authorEmail());
-        assertEquals(OffsetDateTime.parse("2026-10-01T09:00:00+08:00").toEpochSecond(), commit.authorTime());
-        assertEquals(480, commit.tzOffsetMinutes());
+        assertEquals(new AuthorTime(OffsetDateTime.parse("2026-10-01T09:00:00+08:00").toEpochSecond(), 480),
+                commit.authorTime().orElseThrow());
         assertEquals(List.of(new FileChange("README.md", null, ChangeType.A, 2, 0, false)), commit.fileChanges());
     }
 
@@ -103,8 +104,8 @@ class GitServiceTest {
         CommitRecord commit = commits.get(second);
 
         assertEquals("Li Si", commit.authorName());
-        assertEquals(-330, commit.tzOffsetMinutes());
-        assertEquals(OffsetDateTime.parse("2026-10-02T10:30:00-05:30").toEpochSecond(), commit.authorTime());
+        assertEquals(new AuthorTime(OffsetDateTime.parse("2026-10-02T10:30:00-05:30").toEpochSecond(), -330),
+                commit.authorTime().orElseThrow());
         assertEquals(List.of(root), commit.parentHashes());
         assertEquals(List.of(
                 new FileChange("README.md", null, ChangeType.M, 1, 0, false),

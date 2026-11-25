@@ -1,5 +1,6 @@
 package edu.pbl.gitviz.service.git;
 
+import edu.pbl.gitviz.model.AuthorTime;
 import edu.pbl.gitviz.model.ChangeType;
 import edu.pbl.gitviz.model.CommitRecord;
 import edu.pbl.gitviz.model.FileChange;
@@ -14,6 +15,7 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -54,8 +56,7 @@ class GitLogParserTest {
         assertTrue(commit.isMerge());
         assertEquals("张三", commit.authorName());
         assertEquals("Zhang@Example.com", commit.authorEmail());
-        assertEquals(1793516557L, commit.authorTime());
-        assertEquals(480, commit.tzOffsetMinutes());
+        assertEquals(new AuthorTime(1793516557L, 480), commit.authorTime().orElseThrow());
         assertEquals("修复空仓库, \"打开\"报错", commit.subject());
         assertEquals(List.of(), commit.fileChanges());
     }
@@ -97,6 +98,39 @@ class GitLogParserTest {
         assertEquals(6, commit.filesChanged());
         assertEquals(6, commit.additions());
         assertEquals(6, commit.deletions());
+    }
+
+    @Test
+    void anUnknownAuthorTimeKeepsTheCommitWithItsFilesAndAnEmptyTime() {
+        // git 对 1970 年以前的提交输出空的 %at 与 %ai：时间未知，但提交和文件变更照常保留
+        byte[] output = bytes(RS + H1 + US + H2 + US + "张三" + US + "zhang@example.com" + US + US + US
+                        + "旧提交" + NUL,
+                "\n:100644 100644 1111111 2222222 M" + NUL + "a.txt" + NUL + "3\t1\ta.txt" + NUL);
+
+        CommitRecord commit = GitLogParser.parse(output).get(0);
+
+        assertEquals(Optional.empty(), commit.authorTime());
+        assertEquals("旧提交", commit.subject());
+        assertEquals(List.of(new FileChange("a.txt", null, ChangeType.M, 3, 1, false)), commit.fileChanges());
+    }
+
+    @Test
+    void aTimeWithoutItsTimezoneIsAFormatError() {
+        // %at 有值而 %ai 为空不是 git 的正常输出，不能静默当成未知时间
+        assertThrows(GitOutputParseException.class, () -> GitLogParser.parseAuthorTime("1793516557", ""));
+    }
+
+    @Test
+    void parsesNegativeEpochSecondsDefensively() {
+        // 当前 git 不会为负的时间输出数字（见上面的 anUnknownAuthorTime...），这里只保证解析器本身能处理
+        assertEquals(Optional.of(new AuthorTime(-1L, 0)),
+                GitLogParser.parseAuthorTime("-1", "1969-12-31 23:59:59 +0000"));
+    }
+
+    @Test
+    void aTimeOutsideTheDisplayableRangeIsUnknownNotAFailure() {
+        // 超出范围的时间不能让整个仓库打不开，按未知处理
+        assertEquals(Optional.empty(), GitLogParser.parseAuthorTime(Long.toString(Long.MAX_VALUE), "x +0000"));
     }
 
     @Test

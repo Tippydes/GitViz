@@ -102,6 +102,27 @@ class RepositoryLoaderTest {
     }
 
     @Test
+    void preEpochCommitsHaveUnknownTimesSortLastAndTheWholeRepositoryStillOpens() throws GitException {
+        // 实测 git 2.56：所有 1970 年以前的提交都输出空的 %at/%ai，所以两条都是"未知"
+        TestRepo repo = TestRepo.init(temp);
+        String normal = repo.at("2026-11-01T10:00:00+08:00").write("a.txt", "1\n").commit("正常提交");
+        String first = repo.importCommit("张三", "zhang@example.com", -315619200L, "+0800", "1960 年的提交",
+                "b.txt", "2\n");
+        // HEAD 本身就是 1969 年的提交：打开仓库时 HEAD 的时间未知也不能有问题
+        String second = repo.importCommit("李四", "li@example.com", -1L, "+0000", "1969 年的提交",
+                "c.txt", "3\n");
+
+        RepositorySession session = new RepositoryLoader(repo.gitService()).load(repo.root());
+
+        // 有时间的排在前面；时间未知的排在最后，保持 git log 的顺序（HEAD 在前）
+        assertEquals(List.of(normal, second, first), hashes(session.commits()));
+        assertEquals(second, session.head().hash());
+        assertEquals(TimeDisplay.UNKNOWN, TimeDisplay.defaults().format(session.commits().get(1)));
+        assertEquals(TimeDisplay.UNKNOWN, TimeDisplay.defaults().format(session.commits().get(2)));
+        assertEquals(3, session.commitCount(), "时间未知的提交不能让整个仓库打不开");
+    }
+
+    @Test
     void openingAFolderThatIsNotARepositoryFailsWithAGitError() throws IOException {
         Path folder = Files.createDirectories(temp.resolve("普通文件夹"));
         TestRepo isolated = TestRepo.init(temp.resolve("isolation"));
